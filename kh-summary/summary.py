@@ -18,12 +18,11 @@ import sys
 from pathlib import Path
 import webbrowser
 
+# needed since header row of raw export had unnecessary nbsps and whitespaces, leading to wrong column parsing
 def fix_header_line(file_path):
-    # Read the file and fix the first line
     with open(file_path, 'r', encoding='utf-8') as f:
         lines = f.readlines()
     
-    # Fix the header line - keep only tabs and regular characters, remove other whitespace
     header_line = lines[0]
     
     # Replace any non-tab whitespace with nothing, but preserve tabs
@@ -44,10 +43,6 @@ def read_and_process_csv(csv_file_path):
         fixed_file = fix_header_line(csv_file_path)
 
         df = pd.read_csv(fixed_file, sep='\t', encoding='utf-8', skipinitialspace=True)
-
-        df.columns = df.columns.str.strip()
-        df.columns = [c.strip().replace("\u00A0", "") for c in df.columns]
-        df.columns = df.columns.str.strip().str.replace('\s+', ' ', regex=True)
         
         # Remove any completely empty rows
         df = df.dropna(how='all')
@@ -55,7 +50,7 @@ def read_and_process_csv(csv_file_path):
         print(df.columns)
         print(df[df.columns[0]])
         
-        # Check for non-HUF currencies first
+        # Check for non-HUF currencies first, just for safety
         non_huf = df[df['összegdevizaneme'] != 'HUF']
         if not non_huf.empty:
             print(f"Error: Found {len(non_huf)} transactions with non-HUF currency:")
@@ -63,16 +58,15 @@ def read_and_process_csv(csv_file_path):
                 print(f"  Date: {row['könyvelésdátuma']}, Amount: {row['összeg']} {row['összegdevizaneme']}")
             return None
         
-        # Convert date column (assuming YYYY.MM.DD format from your example)
         df['date'] = pd.to_datetime(df['könyvelésdátuma'], format='%Y.%m.%d')
 
-        df = df[df['típus'] != 'Számlamegszüntetés átvezetéssel']
-        # Sort by date (oldest first)
+        df = df[df['típus'] != 'Számlamegszüntetés átvezetéssel'] # old account was weirdly merged
+
         df = df.sort_values('date')
         
         df['date'] = pd.to_datetime(df['date'])
 
-        # Group by date and add incremental hours
+        # Group by date and add incremental hours (export only has date, needed for better detail in chart)
         df['date'] = df.groupby(df['date'].dt.date)['date'].transform(
             lambda x: x + pd.to_timedelta(range(len(x)), unit='H')
         )
@@ -90,7 +84,6 @@ def read_and_process_csv(csv_file_path):
 def create_plotly_chart(df):
     """Create interactive Plotly chart"""
     
-    # Prepare hover data with basic information
     hover_data = []
     for _, row in df.iterrows():        
         amount_color = "🟢" if row['összeg'] > 0 else "🔴" if row['összeg'] < 0 else "⚪"
@@ -105,10 +98,8 @@ def create_plotly_chart(df):
         )
         hover_data.append(hover_text)
     
-    # Create the main balance line chart
     fig = go.Figure()
     
-    # Add balance line with area fill
     fig.add_trace(go.Scatter(
         x=df['date'],
         y=df['balance'],
@@ -130,7 +121,6 @@ def create_plotly_chart(df):
         customdata=hover_data
     ))
     
-    # Add zero line for reference
     fig.add_hline(
         y=0, 
         line_dash="dash", 
@@ -139,7 +129,6 @@ def create_plotly_chart(df):
         annotation_position="bottom right"
     )
     
-    # Color the area based on positive/negative balance
     positive_mask = df['balance'] >= 0
     if positive_mask.any():
         fig.add_trace(go.Scatter(
@@ -166,12 +155,10 @@ def create_plotly_chart(df):
             hoverinfo='skip'
         ))
     
-    # Calculate statistics for title
     current_balance = df['balance'].iloc[-1]
     min_balance = df['balance'].min()
     max_balance = df['balance'].max()
     
-    # Update layout with modern styling
     fig.update_layout(
         title=dict(
             text=f"💰 Bank Account Balance - Current: {current_balance:,.0f} HUF",
@@ -205,7 +192,6 @@ def create_plotly_chart(df):
         showlegend=False
     )
     
-    # Add range selector buttons
     fig.update_layout(
         xaxis=dict(
             rangeselector=dict(
@@ -225,7 +211,6 @@ def create_plotly_chart(df):
         )
     )
     
-    # Add annotations for min/max balance
     fig.add_annotation(
         x=df[df['balance'] == max_balance]['date'].iloc[0],
         y=max_balance,
@@ -260,7 +245,6 @@ def main():
     
     csv_file_path = sys.argv[1]
     
-    # Process CSV
     df = read_and_process_csv(csv_file_path)
     if df is None:
         sys.exit(1)
@@ -270,10 +254,8 @@ def main():
     print(f"💰 Final balance: {df['balance'].iloc[-1]:,.0f} HUF")
     print(f"📊 Balance range: {df['balance'].min():,.0f} to {df['balance'].max():,.0f} HUF")
     
-    # Create Plotly chart
     fig = create_plotly_chart(df)
     
-    # Save HTML file
     output_file = Path("bank_balance_chart.html")
     fig.write_html(
         str(output_file),
@@ -294,7 +276,6 @@ def main():
     
     print(f"📊 Interactive chart saved as: {output_file.absolute()}")
     
-    # Open in browser
     try:
         webbrowser.open(f"file://{output_file.absolute()}")
         print("🌐 Opening chart in your default browser...")
